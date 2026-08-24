@@ -1,4 +1,3 @@
-// server.js
 const express = require('express');
 const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
@@ -11,7 +10,7 @@ const db = new DatabaseSync('report.db');
 
 app.use(express.json());
 
-// Initialize reports bookkeeping table
+// Bookkeeping table initialization
 db.exec(`
   CREATE TABLE IF NOT EXISTS reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -20,44 +19,49 @@ db.exec(`
   );
 `);
 
-// Health check
+// 1. Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// POST /reports (Idempotent: Single report per day)
+// 2. POST /reports (Idempotent endpoint)
 app.post('/reports', async (req, res) => {
-  const today = new Date().toISOString().split('T')[0];
-  const { force } = req.body || {};
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const { force } = req.body || {};
 
-  // Stage 5 Check: Return existing report if generated today
-  if (!force) {
-    const existingReport = db.prepare(`SELECT * FROM reports WHERE created_at = ? ORDER BY id DESC LIMIT 1;`).get(today);
-    if (existingReport) {
-      return res.status(200).json({
-        id: existingReport.id,
-        file: `/reports/${existingReport.id}/file`,
-        cached: true
-      });
+    // Check if report already exists for today
+    if (!force) {
+      const existingReport = db.prepare(`SELECT * FROM reports WHERE created_at = ? ORDER BY id DESC LIMIT 1;`).get(today);
+      if (existingReport) {
+        return res.status(200).json({
+          id: existingReport.id,
+          file: `/reports/${existingReport.id}/file`,
+          cached: true
+        });
+      }
     }
+
+    // Insert record and get ID
+    const insertResult = db.prepare(`INSERT INTO reports (path, created_at) VALUES (?, ?);`).run('pending', today);
+    const reportId = insertResult.lastInsertRowid;
+    const filePath = path.join(__dirname, 'reports', `${reportId}.pdf`);
+
+    // Render PDF and update DB path
+    await generatePDF(filePath);
+    db.prepare(`UPDATE reports SET path = ? WHERE id = ?;`).run(filePath, reportId);
+
+    return res.status(201).json({
+      id: reportId,
+      file: `/reports/${reportId}/file`
+    });
+  } catch (error) {
+    console.error('Error generating report:', error);
+    return res.status(500).json({ error: error.message });
   }
-
-  // Create new report record ID
-  const insertResult = db.prepare(`INSERT INTO reports (path, created_at) VALUES (?, ?);`).run('pending', today);
-  const reportId = insertResult.lastInsertRowid;
-  const filePath = path.join(__dirname, 'reports', `${reportId}.pdf`);
-
-  // Render & store artifact
-  await generatePDF(filePath);
-  db.prepare(`UPDATE reports SET path = ? WHERE id = ?;`).run(filePath, reportId);
-
-  res.status(201).json({
-    id: reportId,
-    file: `/reports/${reportId}/file`
-  });
 });
 
-// GET /reports/:id (Metadata endpoint)
+// 3. GET /reports/:id (Metadata endpoint)
 app.get('/reports/:id', (req, res) => {
   const report = db.prepare(`SELECT * FROM reports WHERE id = ?;`).get(req.params.id);
   if (!report) {
@@ -70,7 +74,7 @@ app.get('/reports/:id', (req, res) => {
   });
 });
 
-// GET /reports/:id/file (Artifact download endpoint)
+// 4. GET /reports/:id/file (Download PDF artifact)
 app.get('/reports/:id/file', (req, res) => {
   const report = db.prepare(`SELECT * FROM reports WHERE id = ?;`).get(req.params.id);
   if (!report || !fs.existsSync(report.path)) {
