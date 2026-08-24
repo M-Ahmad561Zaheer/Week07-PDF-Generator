@@ -5,6 +5,7 @@
 /reports/
 report.db
 report.db-journal
+my-report.pdf
 
 # Environment variables & local secrets
 .env
