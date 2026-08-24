@@ -1,12 +1,9 @@
-// generator.js
 const { DatabaseSync } = require('node:sqlite');
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
-function getReportData() {
-  const db = new DatabaseSync('report.db');
-
+function getReportData(db) {
   const totalOrders = db.prepare(`SELECT COUNT(*) as count FROM orders;`).get().count;
   const totalRevenue = db.prepare(`SELECT SUM(amount) as sum FROM orders;`).get().sum;
 
@@ -95,6 +92,26 @@ function buildHTML(data) {
         </tbody>
       </table>
 
+      <h2 style="margin-top: 30px;">Orders Per Day (Last 7 Days)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Orders Count</th>
+            <th>Daily Revenue</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.dailyOrders.map(d => `
+            <tr>
+              <td>${d.created_at}</td>
+              <td>${d.orders_count}</td>
+              <td>$${d.daily_revenue.toFixed(2)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+
       <h2 style="margin-top: 30px;">All Orders History</h2>
       <table>
         <thead>
@@ -123,8 +140,8 @@ function buildHTML(data) {
   `;
 }
 
-async function generatePDF(outputPath) {
-  const data = getReportData();
+async function generatePDF(db, outputPath) {
+  const data = getReportData(db);
   const html = buildHTML(data);
 
   const browser = await chromium.launch();
@@ -137,6 +154,14 @@ async function generatePDF(outputPath) {
     fs.mkdirSync(reportsDir, { recursive: true });
   }
 
+  // Generate Page 1 PNG Screenshot for README
+  const publicDir = path.join(__dirname, 'public');
+  if (!fs.existsSync(publicDir)) {
+    fs.mkdirSync(publicDir, { recursive: true });
+  }
+  await page.screenshot({ path: path.join(publicDir, 'report-preview.png'), fullPage: false });
+
+  // Generate PDF
   await page.pdf({
     path: outputPath,
     format: 'A4',

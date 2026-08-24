@@ -48,7 +48,8 @@ app.post('/reports', async (req, res) => {
     const filePath = path.join(__dirname, 'reports', `${reportId}.pdf`);
 
     // Render PDF and update DB path
-    await generatePDF(filePath);
+    // Inside POST /reports endpoint in server.js
+    await generatePDF(db, filePath);
     db.prepare(`UPDATE reports SET path = ? WHERE id = ?;`).run(filePath, reportId);
 
     return res.status(201).json({
